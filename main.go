@@ -2,7 +2,6 @@ package main
 
 import (
 	"flag"
-	"io/ioutil"
 	"log"
 	"net"
 	"net/http"
@@ -12,8 +11,9 @@ import (
 )
 
 const (
-	httpPort string = ":80"
-	tcpPort  string = ":7006"
+	httpPort   string = ":80"
+	tcpPort    string = ":7006"
+	bufferSize int    = 4096
 )
 
 // Targets stores the pool of URLs and the global indexer
@@ -27,21 +27,18 @@ func getNextTarget(targets *Targets) string {
 	return targets.targets[int(targets.atomicCounter)%len(targets.targets)]
 }
 
-func proxyConn(source, dest net.Conn) (net.Conn, error) {
-	clientRequest, err := ioutil.ReadAll(source)
+func proxyConn(source, dest net.Conn) {
+	var buffer [bufferSize]byte
+	n, err := source.Read(buffer[0:])
 	if err != nil {
-		log.Println(err)
-		return nil, err
+		log.Printf("Error reading from source connection: %s", err)
+		return
 	}
-	log.Printf("Source message from %s: %s\n", source.LocalAddr(), string(clientRequest))
-
-	_, err = dest.Write(clientRequest)
+	n, err = dest.Write(buffer[:n])
 	if err != nil {
-		log.Println(err)
-		return nil, err
+		log.Printf("Error writing to dest connection: %s", err)
+		return
 	}
-
-	return dest, nil
 }
 
 func (targets *Targets) loadBalanceHTTP(w http.ResponseWriter, req *http.Request) {
@@ -53,29 +50,23 @@ func (targets *Targets) loadBalanceHTTP(w http.ResponseWriter, req *http.Request
 
 func (targets *Targets) loadBalanceTCP(clientConn net.Conn) {
 	// Deferring here as the caller function will never return (infinite while loop)
-	// defer clientConn.Close()
+	defer clientConn.Close()
 
 	target := getNextTarget(targets)
 
 	remoteConn, err := net.Dial("tcp4", target)
 	if err != nil {
-		log.Println(err)
+		log.Printf("Error establishing tcp connection to %s. %s", target, err)
 		return
 	}
 	defer remoteConn.Close()
 
-	log.Printf("Loadbalancing to %s\n", remoteConn.RemoteAddr())
+	log.Printf("Loadbalancing to %s", remoteConn.RemoteAddr())
 
-	remoteConn, err = proxyConn(clientConn, remoteConn)
-	if err != nil {
-		log.Println(err)
-		return
-	}
-	_, err = proxyConn(remoteConn, clientConn)
-	if err != nil {
-		log.Println(err)
-		return
-	}
+	// request
+	proxyConn(clientConn, remoteConn)
+	// response
+	proxyConn(remoteConn, clientConn)
 }
 
 func main() {
@@ -83,8 +74,8 @@ func main() {
 	flag.Parse()
 
 	targets := Targets{
-		// targets: []string{"www.bbc.com:80", "www.google.com:80", "www.amazon.com:80"},
-		targets: []string{"tcpbin.com:4242"},
+		targets: []string{"www.bbc.com:80", "www.google.com:80", "www.amazon.com:80"},
+		// targets: []string{"tcpbin.com:4242"},
 	}
 
 	switch *proto {
