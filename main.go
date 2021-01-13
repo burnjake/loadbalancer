@@ -1,30 +1,70 @@
 package main
 
 import (
+	"errors"
 	"flag"
 	"log"
 	"net"
 	"net/http"
 	"net/http/httputil"
 	"net/url"
+	"sync"
 	"sync/atomic"
+	"time"
 )
 
 const (
-	httpPort   string = ":80"
-	tcpPort    string = ":7006"
-	bufferSize int    = 4096
+	httpPort                  string = ":8090"
+	tcpPort                   string = ":5353"
+	bufferSize                int    = 4096
+	healthCheckCadenceSeconds int    = 5
+	healthCheckTimeoutSeconds int    = 1
 )
 
-// Targets stores the pool of URLs and the global indexer
-type Targets struct {
-	targets       []string
+// Target defines a destination server
+type Target struct {
+	address string
+	healthy bool
+	mu      sync.RWMutex
+}
+
+// Pool stores the list of targets and the global indexer
+type Pool struct {
+	pool          []*Target
 	atomicCounter uint64
 }
 
-func getNextTarget(targets *Targets) string {
-	atomic.AddUint64(&targets.atomicCounter, 1)
-	return targets.targets[int(targets.atomicCounter)%len(targets.targets)]
+func (target *Target) checkHealth() {
+	tcpConn, err := net.DialTimeout(
+		"tcp4",
+		target.address,
+		time.Duration(healthCheckTimeoutSeconds)*time.Second,
+	)
+
+	if err != nil {
+		target.mu.Lock()
+		target.healthy = false
+		target.mu.Unlock()
+	} else {
+		target.mu.Lock()
+		target.healthy = true
+		target.mu.Unlock()
+		defer tcpConn.Close()
+	}
+}
+
+func (pool *Pool) getNextTarget() (*Target, error) {
+	for i := 0; i < len(pool.pool); i++ {
+		index := int(atomic.AddUint64(&pool.atomicCounter, 1))
+		potentialTarget := pool.pool[index%len(pool.pool)]
+		potentialTarget.mu.Lock()
+		defer potentialTarget.mu.Unlock()
+		if potentialTarget.healthy == true {
+			return potentialTarget, nil
+		}
+	}
+
+	return nil, errors.New("pool has no healthy targets")
 }
 
 func proxyConn(source, dest net.Conn) {
@@ -41,22 +81,31 @@ func proxyConn(source, dest net.Conn) {
 	}
 }
 
-func (targets *Targets) loadBalanceHTTP(w http.ResponseWriter, req *http.Request) {
-	url, _ := url.Parse(getNextTarget(targets))
+func (pool *Pool) loadBalanceHTTP(w http.ResponseWriter, req *http.Request) {
+	target, err := pool.getNextTarget()
+	if err != nil {
+		log.Printf("Error fetching next target: %s", err)
+		return
+	}
+	url, _ := url.Parse("http://" + target.address)
 	proxy := httputil.NewSingleHostReverseProxy(url)
 	log.Printf("Loadbalancing to %s", url)
 	proxy.ServeHTTP(w, req)
 }
 
-func (targets *Targets) loadBalanceTCP(clientConn net.Conn) {
+func (pool *Pool) loadBalanceTCP(clientConn net.Conn) {
 	// Deferring here as the caller function will never return (infinite while loop)
 	defer clientConn.Close()
 
-	target := getNextTarget(targets)
-
-	remoteConn, err := net.Dial("tcp4", target)
+	target, err := pool.getNextTarget()
 	if err != nil {
-		log.Printf("Error establishing tcp connection to %s. %s", target, err)
+		log.Printf("Error fetching next target: %s", err)
+		return
+	}
+
+	remoteConn, err := net.Dial("tcp4", target.address)
+	if err != nil {
+		log.Printf("Error establishing tcp connection to %s. %s", target.address, err)
 		return
 	}
 	defer remoteConn.Close()
@@ -73,15 +122,27 @@ func main() {
 	proto := flag.String("protocol", "http", "Valid options are tcp and http. Defaults to http.")
 	flag.Parse()
 
-	targets := Targets{
-		targets: []string{"www.bbc.com:80", "www.google.com:80", "www.amazon.com:80"},
-		// targets: []string{"tcpbin.com:4242"},
+	var pool Pool
+
+	pool.pool = []*Target{
+		{address: "tcpbin.com:4242"},
+		{address: "tcpbin.com:4343"},
+		{address: "tcpbin.com:4444"},
 	}
+
+	go func(targets []*Target) {
+		for {
+			for _, target := range targets {
+				target.checkHealth()
+			}
+			time.Sleep(time.Duration(healthCheckCadenceSeconds) * time.Second)
+		}
+	}(pool.pool)
 
 	switch *proto {
 	case "http":
 		log.Println("Loadbalancing via http...")
-		http.HandleFunc("/", targets.loadBalanceHTTP)
+		http.HandleFunc("/", pool.loadBalanceHTTP)
 		err := (http.ListenAndServe(httpPort, nil))
 		if err != nil {
 			log.Println(err)
@@ -100,7 +161,7 @@ func main() {
 				log.Println(err)
 				return
 			}
-			go targets.loadBalanceTCP(conn)
+			go pool.loadBalanceTCP(conn)
 		}
 	default:
 		log.Fatal("Unsupported protocol:", *proto)
