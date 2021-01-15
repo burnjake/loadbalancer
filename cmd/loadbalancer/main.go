@@ -11,11 +11,14 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
+
+	"github.com/prometheus/client_golang/prometheus/promhttp"
 )
 
 const (
 	httpPort                  string = ":8090"
 	tcpPort                   string = ":5353"
+	metricsPort               string = ":8091"
 	bufferSize                int    = 4096
 	healthCheckCadenceSeconds int    = 5
 	healthCheckTimeoutSeconds int    = 1
@@ -129,6 +132,11 @@ func main() {
 		{address: "tcpbin.com:4343"},
 		{address: "tcpbin.com:4444"},
 	}
+
+	go func() {
+		http.Handle("/metrics", promhttp.Handler())
+		http.ListenAndServe(metricsPort, nil)
+	}()
 
 	go func(targets []*Target) {
 		for {
