@@ -11,11 +11,16 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
+
+	"github.com/burnjake/loadbalancer/internal/metrics"
+
+	"github.com/prometheus/client_golang/prometheus/promhttp"
 )
 
 const (
 	httpPort                  string = ":8090"
 	tcpPort                   string = ":5353"
+	metricsPort               string = ":8091"
 	bufferSize                int    = 4096
 	healthCheckCadenceSeconds int    = 5
 	healthCheckTimeoutSeconds int    = 1
@@ -67,20 +72,6 @@ func (pool *Pool) getNextTarget() (*Target, error) {
 	return nil, errors.New("pool has no healthy targets")
 }
 
-func proxyConn(source, dest net.Conn) {
-	var buffer [bufferSize]byte
-	n, err := source.Read(buffer[0:])
-	if err != nil {
-		log.Printf("Error reading from source connection: %s", err)
-		return
-	}
-	n, err = dest.Write(buffer[:n])
-	if err != nil {
-		log.Printf("Error writing to dest connection: %s", err)
-		return
-	}
-}
-
 func (pool *Pool) loadBalanceHTTP(w http.ResponseWriter, req *http.Request) {
 	target, err := pool.getNextTarget()
 	if err != nil {
@@ -118,8 +109,22 @@ func (pool *Pool) loadBalanceTCP(clientConn net.Conn) {
 	proxyConn(remoteConn, clientConn)
 }
 
+func proxyConn(source, dest net.Conn) {
+	var buffer [bufferSize]byte
+	n, err := source.Read(buffer[0:])
+	if err != nil {
+		log.Printf("Error reading from source connection: %s", err)
+		return
+	}
+	n, err = dest.Write(buffer[:n])
+	if err != nil {
+		log.Printf("Error writing to dest connection: %s", err)
+		return
+	}
+}
+
 func main() {
-	proto := flag.String("protocol", "http", "Valid options are tcp and http. Defaults to http.")
+	proto := flag.String("protocol", "http", "Valid options are tcp and http.")
 	flag.Parse()
 
 	var pool Pool
@@ -130,11 +135,23 @@ func main() {
 		{address: "tcpbin.com:4444"},
 	}
 
+	metrics.NumTargets.Set(float64(len(pool.pool)))
+
+	go func() {
+		http.Handle("/metrics", promhttp.Handler())
+		http.ListenAndServe(metricsPort, nil)
+	}()
+
 	go func(targets []*Target) {
 		for {
+			healthyTargets := 0
 			for _, target := range targets {
 				target.checkHealth()
+				if target.healthy == true {
+					healthyTargets++
+				}
 			}
+			metrics.NumHealthyTargets.Set(float64(healthyTargets))
 			time.Sleep(time.Duration(healthCheckCadenceSeconds) * time.Second)
 		}
 	}(pool.pool)
@@ -161,6 +178,7 @@ func main() {
 				log.Println(err)
 				return
 			}
+			metrics.TCPConnectionsCounter.Add(1)
 			go pool.loadBalanceTCP(conn)
 		}
 	default:
