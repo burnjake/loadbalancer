@@ -2,6 +2,7 @@
 
 First attempt at writing a basic loadbalancer. Includes:
 - TCP and HTTP proxying
+- Target health checks that automatically remove/adds targets to the available pool
 - Prometheus metrics
 - Dockerfile
 
