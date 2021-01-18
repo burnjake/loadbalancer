@@ -1,5 +1,4 @@
 FROM golang:1.15.6-alpine as build
-# ENV GO111MODULE=on
 RUN mkdir -p /go/src/github.com/burnjake/loadbalancer
 WORKDIR /go/src/github.com/burnjake/loadbalancer
 COPY . .
