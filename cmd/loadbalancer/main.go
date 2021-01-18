@@ -3,28 +3,41 @@ package main
 import (
 	"errors"
 	"flag"
+	"io/ioutil"
 	"log"
 	"net"
 	"net/http"
 	"net/http/httputil"
 	"net/url"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
 
 	"github.com/burnjake/loadbalancer/internal/metrics"
+	"gopkg.in/yaml.v2"
 
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 )
 
-const (
-	httpPort                  string = ":8090"
-	tcpPort                   string = ":5353"
-	metricsPort               string = ":8091"
-	bufferSize                int    = 4096
-	healthCheckCadenceSeconds int    = 5
-	healthCheckTimeoutSeconds int    = 1
-)
+const bufferSize int = 4096
+
+var conf Config
+
+// Config defines the app config structure as read in from a yaml file
+type Config struct {
+	Addresses string `yaml:"addresses"`
+	Protocol  string `yaml:"protocol"`
+	Ports     struct {
+		TCP     string `yaml:"tcp"`
+		HTTP    string `yaml:"http"`
+		Metrics string `yaml:"metrics"`
+	} `yaml:"ports"`
+	HealthCheck struct {
+		CadenceSeconds int `yaml:"cadenceSeconds"`
+		TimeoutSeconds int `yaml:"timeoutSeconds"`
+	} `yaml:"healthCheck"`
+}
 
 // Target defines a destination server
 type Target struct {
@@ -39,11 +52,23 @@ type Pool struct {
 	atomicCounter uint64
 }
 
+func (config *Config) readConfig(filepath string) {
+	contents, err := ioutil.ReadFile(filepath)
+	if err != nil {
+		log.Fatalf("Error reading from config file: %s", err)
+	}
+
+	err = yaml.Unmarshal(contents, config)
+	if err != nil {
+		log.Fatalf("Error parsing yaml: %s", err)
+	}
+}
+
 func (target *Target) checkHealth() {
 	tcpConn, err := net.DialTimeout(
 		"tcp4",
 		target.address,
-		time.Duration(healthCheckTimeoutSeconds)*time.Second,
+		time.Duration(conf.HealthCheck.TimeoutSeconds)*time.Second,
 	)
 
 	if err != nil {
@@ -123,23 +148,28 @@ func proxyConn(source, dest net.Conn) {
 	}
 }
 
+func makeTargets(addresses string) []*Target {
+	var targets []*Target
+	for _, address := range strings.Split(addresses, ",") {
+		targets = append(targets, &Target{address: address})
+	}
+	return targets
+}
+
 func main() {
-	proto := flag.String("protocol", "http", "Valid options are tcp and http.")
+	filepath := flag.String("config", "/opt/loadbalancer/config.yaml", "Config file path")
 	flag.Parse()
 
 	var pool Pool
+	conf.readConfig(*filepath)
 
-	pool.pool = []*Target{
-		{address: "tcpbin.com:4242"},
-		{address: "tcpbin.com:4343"},
-		{address: "tcpbin.com:4444"},
-	}
+	pool.pool = makeTargets(conf.Addresses)
 
 	metrics.NumTargets.Set(float64(len(pool.pool)))
 
 	go func() {
 		http.Handle("/metrics", promhttp.Handler())
-		http.ListenAndServe(metricsPort, nil)
+		http.ListenAndServe(":"+conf.Ports.Metrics, nil)
 	}()
 
 	go func(targets []*Target) {
@@ -152,21 +182,21 @@ func main() {
 				}
 			}
 			metrics.NumHealthyTargets.Set(float64(healthyTargets))
-			time.Sleep(time.Duration(healthCheckCadenceSeconds) * time.Second)
+			time.Sleep(time.Duration(conf.HealthCheck.CadenceSeconds) * time.Second)
 		}
 	}(pool.pool)
 
-	switch *proto {
+	switch conf.Protocol {
 	case "http":
 		log.Println("Loadbalancing via http...")
 		http.HandleFunc("/", pool.loadBalanceHTTP)
-		err := (http.ListenAndServe(httpPort, nil))
+		err := (http.ListenAndServe(":"+conf.Ports.HTTP, nil))
 		if err != nil {
 			log.Println(err)
 		}
 	case "tcp":
 		log.Println("Loadbalancing via tcp...")
-		listener, err := net.Listen("tcp4", tcpPort)
+		listener, err := net.Listen("tcp4", ":"+conf.Ports.TCP)
 		if err != nil {
 			log.Println(err)
 		}
@@ -182,6 +212,6 @@ func main() {
 			go pool.loadBalanceTCP(conn)
 		}
 	default:
-		log.Fatal("Unsupported protocol:", *proto)
+		log.Fatal("Unsupported protocol:", conf.Protocol)
 	}
 }

@@ -1,0 +1,9 @@
+addresses: "tcpbin.com:4242,tcpbin.com:4343,tcpbin.com:4444"
+protocol: "tcp"
+ports:
+  tcp: "5353"
+  http: "8090"
+  metrics: "8091"
+healthCheck:
+  cadenceSeconds: 5
+  timeoutSeconds: 1
