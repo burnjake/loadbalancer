@@ -124,7 +124,7 @@ func proxyConn(source, dest net.Conn) {
 }
 
 func main() {
-	proto := flag.String("protocol", "http", "Valid options are tcp and http. Defaults to http.")
+	proto := flag.String("protocol", "http", "Valid options are tcp and http.")
 	flag.Parse()
 
 	var pool Pool
