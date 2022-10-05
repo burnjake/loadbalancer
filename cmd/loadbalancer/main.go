@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"net/http/httputil"
 	"net/url"
+	"os"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -89,7 +90,7 @@ func (pool *Pool) getNextTarget() (*Target, error) {
 		potentialTarget := pool.pool[index%len(pool.pool)]
 		potentialTarget.mu.Lock()
 		defer potentialTarget.mu.Unlock()
-		if potentialTarget.healthy == true {
+		if potentialTarget.healthy {
 			return potentialTarget, nil
 		}
 	}
@@ -141,7 +142,7 @@ func proxyConn(source, dest net.Conn) {
 		log.Printf("Error reading from source connection: %s", err)
 		return
 	}
-	n, err = dest.Write(buffer[:n])
+	_, err = dest.Write(buffer[:n])
 	if err != nil {
 		log.Printf("Error writing to dest connection: %s", err)
 		return
@@ -152,6 +153,7 @@ func makeTargets(addresses string) []*Target {
 	var targets []*Target
 	for _, address := range strings.Split(addresses, ",") {
 		targets = append(targets, &Target{address: address})
+		log.Printf("Parsed target: %s", address)
 	}
 	return targets
 }
@@ -161,7 +163,11 @@ func main() {
 	flag.Parse()
 
 	var pool Pool
+
 	conf.readConfig(*filepath)
+	if os.Getenv("ADDRESSES") != "" {
+		conf.Addresses = os.Getenv("ADDRESSES")
+	}
 
 	pool.pool = makeTargets(conf.Addresses)
 
@@ -177,7 +183,7 @@ func main() {
 			healthyTargets := 0
 			for _, target := range targets {
 				target.checkHealth()
-				if target.healthy == true {
+				if target.healthy {
 					healthyTargets++
 				}
 			}
