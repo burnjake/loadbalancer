@@ -9,7 +9,6 @@ import (
 	"net/http"
 	"net/http/httputil"
 	"net/url"
-	"os"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -165,9 +164,6 @@ func main() {
 	var pool Pool
 
 	conf.readConfig(*filepath)
-	if os.Getenv("ADDRESSES") != "" {
-		conf.Addresses = os.Getenv("ADDRESSES")
-	}
 
 	pool.pool = makeTargets(conf.Addresses)
 

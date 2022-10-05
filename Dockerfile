@@ -7,6 +7,5 @@ RUN export CGO_ENABLED=0 GOOS=linux GOARCH=amd64 && go build -a -o /go/bin/loadb
 
 FROM scratch
 COPY --from=build /go/bin/loadbalancer /go/bin/loadbalancer
-COPY config.yaml /opt/loadbalancer/config.yaml
 EXPOSE 8090 8091 5353
 ENTRYPOINT ["/go/bin/loadbalancer"]
