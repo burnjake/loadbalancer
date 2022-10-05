@@ -126,7 +126,7 @@ func (pool *Pool) loadBalanceTCP(clientConn net.Conn) {
 	}
 	defer remoteConn.Close()
 
-	log.Printf("Loadbalancing to %s", remoteConn.RemoteAddr())
+	log.Printf("Loadbalancing to %s", target.address)
 
 	// request
 	proxyConn(clientConn, remoteConn)
