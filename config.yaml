@@ -1,8 +1,8 @@
 addresses: "tcpbin.com:4242,tcpbin.com:4343,tcpbin.com:4444"
 protocol: "tcp"
 ports:
-  tcp: "5353"
-  http: "8090"
+  tcp: "8000"
+  http: "8001"
   metrics: "8091"
 healthCheck:
   cadenceSeconds: 5
