@@ -103,7 +103,7 @@ func (pool *Pool) loadBalanceHTTP(w http.ResponseWriter, req *http.Request) {
 		log.Printf("Error fetching next target: %s", err)
 		return
 	}
-	url, _ := url.Parse("http://" + target.address)
+	url, _ := url.Parse("https://" + target.address)
 	proxy := httputil.NewSingleHostReverseProxy(url)
 	log.Printf("Loadbalancing to %s", url)
 	proxy.ServeHTTP(w, req)
