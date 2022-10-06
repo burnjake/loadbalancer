@@ -122,6 +122,7 @@ func (pool *Pool) loadBalanceTCP(clientConn net.Conn) {
 	remoteConn, err := net.Dial("tcp4", target.address)
 	if err != nil {
 		log.Printf("Error establishing tcp connection to %s. %s", target.address, err)
+		metrics.TCPConnectionsCounter.Add(1)
 		return
 	}
 	defer remoteConn.Close()
