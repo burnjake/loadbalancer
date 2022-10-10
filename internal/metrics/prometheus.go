@@ -6,12 +6,6 @@ import (
 )
 
 var (
-	// TCPConnectionsCounter stores the total number of incoming tcp connections
-	TCPConnectionsCounter = promauto.NewCounter(prometheus.CounterOpts{
-		Name: "incoming_tcp_connections_total",
-		Help: "The total number of incoming tcp connections",
-	})
-
 	// TCPConnectionErrorsCounter stores the total number of incoming tcp connection errors
 	TCPConnectionErrorsCounter = promauto.NewCounter(prometheus.CounterOpts{
 		Name: "incoming_tcp_connection_errors_total",
