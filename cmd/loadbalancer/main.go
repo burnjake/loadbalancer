@@ -211,7 +211,6 @@ func main() {
 				log.Println(err)
 				return
 			}
-			metrics.TCPConnectionsCounter.Add(1)
 			go pool.loadBalanceTCP(conn)
 		}
 	default:

@@ -12,12 +12,6 @@ var (
 		Help: "The total number of incoming tcp connections",
 	})
 
-	// TCPConnectionErrorsCounter stores the total number of incoming tcp connection errors
-	TCPConnectionErrorsCounter = promauto.NewCounter(prometheus.CounterOpts{
-		Name: "incoming_tcp_connection_errors_total",
-		Help: "The total number of incoming tcp connection errors",
-	})
-
 	// NumTargets stores the number of targets
 	NumTargets = promauto.NewGauge(prometheus.GaugeOpts{
 		Name: "num_targets",
