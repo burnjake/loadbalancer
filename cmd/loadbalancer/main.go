@@ -3,12 +3,12 @@ package main
 import (
 	"errors"
 	"flag"
-	"io/ioutil"
 	"log"
 	"net"
 	"net/http"
 	"net/http/httputil"
 	"net/url"
+	"os"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -53,7 +53,7 @@ type Pool struct {
 }
 
 func (config *Config) readConfig(filepath string) {
-	contents, err := ioutil.ReadFile(filepath)
+	contents, err := os.ReadFile(filepath)
 	if err != nil {
 		log.Fatalf("Error reading from config file: %s", err)
 	}
