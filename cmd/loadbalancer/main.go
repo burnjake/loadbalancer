@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"errors"
 	"flag"
 	"io/ioutil"
@@ -14,7 +15,9 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/burnjake/loadbalancer/internal/metrics"
+	"github.com/burnjake/loadbalancer/internal/metrics/otel"
+	"github.com/burnjake/loadbalancer/internal/metrics/prom"
+	"go.opentelemetry.io/otel/metric"
 	"gopkg.in/yaml.v2"
 
 	"github.com/prometheus/client_golang/prometheus/promhttp"
@@ -37,6 +40,9 @@ type Config struct {
 		CadenceSeconds int `yaml:"cadenceSeconds"`
 		TimeoutSeconds int `yaml:"timeoutSeconds"`
 	} `yaml:"healthCheck"`
+	Otel struct {
+		Endpoint string `yaml:"endpoint"`
+	} `yaml:"otel"`
 }
 
 // Target defines a destination server
@@ -109,7 +115,7 @@ func (pool *Pool) loadBalanceHTTP(w http.ResponseWriter, req *http.Request) {
 	proxy.ServeHTTP(w, req)
 }
 
-func (pool *Pool) loadBalanceTCP(clientConn net.Conn) {
+func (pool *Pool) loadBalanceTCP(clientConn net.Conn, context context.Context, tcpConnectionErrorsCounter metric.Int64Counter) {
 	// Deferring here as the caller function will never return (infinite while loop)
 	defer clientConn.Close()
 
@@ -122,7 +128,8 @@ func (pool *Pool) loadBalanceTCP(clientConn net.Conn) {
 	remoteConn, err := net.Dial("tcp4", target.address)
 	if err != nil {
 		log.Printf("Error establishing tcp connection to %s. %s", target.address, err)
-		metrics.TCPConnectionErrorsCounter.Add(1)
+		prom.TCPConnectionErrorsCounter.Add(1)
+		tcpConnectionErrorsCounter.Add(context, 1)
 		return
 	}
 	defer remoteConn.Close()
@@ -162,13 +169,20 @@ func main() {
 	filepath := flag.String("config", "/opt/loadbalancer/config.yaml", "Config file path")
 	flag.Parse()
 
-	var pool Pool
+	ctx := context.Background()
 
 	conf.readConfig(*filepath)
 
+	var pool Pool
 	pool.pool = makeTargets(conf.Addresses)
 
-	metrics.NumTargets.Set(float64(len(pool.pool)))
+	metrics, shutdownOtel, err := otel.InitMetrics(ctx, conf.Otel.Endpoint)
+	if err != nil {
+		log.Println(err)
+	}
+	defer shutdownOtel(ctx)
+
+	prom.NumTargets.Set(float64(len(pool.pool)))
 
 	go func() {
 		http.Handle("/metrics", promhttp.Handler())
@@ -184,7 +198,7 @@ func main() {
 					healthyTargets++
 				}
 			}
-			metrics.NumHealthyTargets.Set(float64(healthyTargets))
+			prom.NumHealthyTargets.Set(float64(healthyTargets))
 			time.Sleep(time.Duration(conf.HealthCheck.CadenceSeconds) * time.Second)
 		}
 	}(pool.pool)
@@ -211,8 +225,9 @@ func main() {
 				log.Println(err)
 				return
 			}
-			metrics.TCPConnectionsCounter.Add(1)
-			go pool.loadBalanceTCP(conn)
+			prom.TCPConnectionsCounter.Add(1)
+			metrics.TCPConnectionsCounter.Add(ctx, 1)
+			go pool.loadBalanceTCP(conn, ctx, metrics.TCPConnectionErrorsCounter)
 		}
 	default:
 		log.Fatal("Unsupported protocol:", conf.Protocol)

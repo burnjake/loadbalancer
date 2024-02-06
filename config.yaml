@@ -7,3 +7,5 @@ ports:
 healthCheck:
   cadenceSeconds: 5
   timeoutSeconds: 1
+otel:
+  endpoint: 127.0.0.1:4317
